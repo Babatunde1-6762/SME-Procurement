@@ -78,15 +78,18 @@ def load_artefacts():
 @st.cache_resource
 def load_tflite():
     try:
-        import tensorflow as tf
-        interp = tf.lite.Interpreter(model_path='sme_tf_lite.tflite')
+        try:
+            import tflite_runtime.interpreter as tflite
+            interp = tflite.Interpreter(model_path='sme_tf_lite.tflite')
+        except ImportError:
+            import tensorflow as tf
+            interp = tf.lite.Interpreter(model_path='sme_tf_lite.tflite')
         interp.allocate_tensors()
         return interp
     except Exception:
         return None
 
 def predict_tflite(interp, x):
-    import tensorflow as tf
     inp = interp.get_input_details()
     out = interp.get_output_details()
     interp.set_tensor(inp[0]['index'], x.astype(np.float32))
