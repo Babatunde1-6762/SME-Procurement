@@ -64,10 +64,9 @@ def load_artefacts():
     enc    = json.load(open('encoders.json'))
     feats  = json.load(open('feature_cols.json'))
     rates  = json.load(open('historical_rates.json'))
-    # Load model comparison to find best performer
     try:
         results = pd.read_csv('model_comparison.csv')
-        best_row = results.loc[results['AUC-ROC'].idxmax()]
+        best_row  = results.loc[results['AUC-ROC'].idxmax()]
         best_name = best_row['Model']
         best_auc  = best_row['AUC-ROC']
     except Exception:
@@ -96,136 +95,151 @@ def predict_tflite(interp, x):
     interp.invoke()
     return float(interp.get_tensor(out[0]['index'])[0][0])
 
-def build_row(cv,am,aq,region,cpv,vband,buyer,encoders,feature_cols,rates,scaler):
+def build_row(cv, am, aq, region, cpv, vband, buyer, encoders, feature_cols, rates, scaler):
     log_cv = np.log1p(cv)
     vbnum  = 0 if cv<10000 else 1 if cv<50000 else 2 if cv<100000 else 3 if cv<500000 else 4
     is_qe  = int(aq in [1,4])
-    is_hv  = int(cv>100000)
+    is_hv  = int(cv > 100000)
     br     = rates['buyer_sme_rate'].get(str(buyer),   rates['global_sme_rate'])
     cr     = rates['cpv_sme_rate'].get(str(cpv),       rates['global_sme_rate'])
     rr     = rates['region_sme_rate'].get(str(region), rates['global_sme_rate'])
-    vb_enc = encoders.get('value_band',{}).get(str(vband),0)
-    r_enc  = encoders.get('region',{}).get(str(region),0)
-    c_enc  = encoders.get('cpv_code',{}).get(str(cpv),0)
-    d = {'log_contract_value':log_cv,'value_band_num':vbnum,
-         'award_month':am,'award_quarter':aq,'is_quarter_end':is_qe,
-         'is_high_value':is_hv,'buyer_sme_rate':br,'cpv_sme_rate':cr,
-         'region_sme_rate':rr,'value_band_enc':vb_enc,
-         'region_enc':r_enc,'cpv_code_enc':c_enc}
-    row = pd.DataFrame([{c:d.get(c,0) for c in feature_cols}])
+    vb_enc = encoders.get('value_band', {}).get(str(vband), 0)
+    r_enc  = encoders.get('region',     {}).get(str(region), 0)
+    c_enc  = encoders.get('cpv_code',   {}).get(str(cpv), 0)
+    d = {
+        'log_contract_value': log_cv,
+        'value_band_num':     vbnum,
+        'award_month':        am,
+        'award_quarter':      aq,
+        'is_quarter_end':     is_qe,
+        'is_high_value':      is_hv,
+        'buyer_sme_rate':     br,
+        'cpv_sme_rate':       cr,
+        'region_sme_rate':    rr,
+        'value_band_enc':     vb_enc,
+        'region_enc':         r_enc,
+        'cpv_code_enc':       c_enc,
+    }
+    row = pd.DataFrame([{c: d.get(c, 0) for c in feature_cols}])
     return scaler.transform(row.values), br, cr, rr
 
-rf,xgb,lr,scaler,encoders,feature_cols,rates,best_name,best_auc = load_artefacts()
+rf, xgb, lr, scaler, encoders, feature_cols, rates, best_name, best_auc = load_artefacts()
 tflite = load_tflite()
-all_cpv_codes  = list(encoders.get('cpv_code',{'Unknown':0}).keys())
+all_cpv_codes  = list(encoders.get('cpv_code',  {'Unknown': 0}).keys())
 all_industries = sorted(set(CPV_LOOKUP.values()))
 
-# Map best model name to model object and dropdown label
 MODEL_MAP = {
-    'Random Forest'             : ('Random Forest',            rf),
-    'XGBoost'                   : ('XGBoost',                  xgb),
-    'Logistic Regression'       : ('Logistic Regression',      lr),
-    'Logistic Regression (baseline)': ('Logistic Regression',  lr),
+    'Random Forest':                ('Random Forest',       rf),
+    'XGBoost':                      ('XGBoost',             xgb),
+    'Logistic Regression':          ('Logistic Regression', lr),
+    'Logistic Regression (baseline)':('Logistic Regression',lr),
 }
 best_label, best_model_obj = MODEL_MAP.get(best_name, ('Random Forest', rf))
 
-# Build dropdown options with best model labelled as recommended
 model_options = []
-for opt in ['Random Forest','XGBoost','Logistic Regression']:
+for opt in ['Random Forest', 'XGBoost', 'Logistic Regression']:
     if opt == best_label:
         auc_str = f' — AUC {best_auc:.3f}' if best_auc else ''
         model_options.append(f'{opt} ⭐ Recommended{auc_str}')
     else:
         model_options.append(opt)
-default_index = next((i for i,o in enumerate(model_options) if '⭐' in o), 0)
+default_index = next((i for i, o in enumerate(model_options) if '⭐' in o), 0)
 
-st.set_page_config(page_title='SME Award Predictor',page_icon='🏆',layout='wide')
+st.set_page_config(page_title='SME Award Predictor', page_icon='🏆', layout='wide')
 st.title('🏆 SME Contract Award Predictor')
 st.markdown('Predict the likelihood of a UK public procurement contract being awarded to an **SME**.')
 
-# Best model banner
 if best_auc:
     st.success(f'🏆 Best performing model: **{best_label}**  |  AUC-ROC: **{best_auc:.4f}**  — automatically set as default')
 st.divider()
 
-tab1,tab2,tab3,tab4 = st.tabs(['🔮 ML Predict','🧠 Deep Learning','🏭 CPV Lookup','📊 Historical'])
+tab1, tab2, tab3, tab4 = st.tabs(['🔮 ML Predict', '🧠 Deep Learning', '🏭 CPV Lookup', '📊 Historical'])
 
-# ── TAB 1: ML PREDICTION ───────────────────────────────────────
+# ── TAB 1: ML PREDICTION ─────────────────────────────────────────────────────
 with tab1:
     st.subheader('Traditional ML Models')
     st.caption(f'Default model is set to the best performer from training: **{best_label}**')
-    c1,c2,c3 = st.columns(3)
+    c1, c2, c3 = st.columns(3)
     with c1:
-        cv1 = st.number_input('Contract value (£)',min_value=0.0,value=50000.0,step=1000.0,key='cv1')
-        am1 = st.selectbox('Month',list(range(1,13)),format_func=lambda m:['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1],key='am1')
-        aq1 = st.selectbox('Quarter',[1,2,3,4],format_func=lambda q:f'Q{q}',key='aq1')
+        cv1 = st.number_input('Contract value (£)', min_value=0.0, value=50000.0, step=1000.0, key='cv1')
+        am1 = st.selectbox('Month', list(range(1,13)),
+                           format_func=lambda m: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1],
+                           key='am1')
+        aq1 = st.selectbox('Quarter', [1,2,3,4], format_func=lambda q: f'Q{q}', key='aq1')
     with c2:
-        r1  = st.selectbox('Region',   list(encoders.get('region',{'Unknown':0}).keys()),key='r1')
-        vb1 = st.selectbox('Value band',list(encoders.get('value_band',{'Unknown':0}).keys()),key='vb1')
-        inp_method1 = st.radio('CPV input method',['Select CPV code','Select by industry'],key='im1',horizontal=True)
+        r1  = st.selectbox('Region',     list(encoders.get('region',     {'Unknown':0}).keys()), key='r1')
+        vb1 = st.selectbox('Value band', list(encoders.get('value_band', {'Unknown':0}).keys()), key='vb1')
+        inp_method1 = st.radio('CPV input method', ['Select CPV code', 'Select by industry'], key='im1', horizontal=True)
         if inp_method1 == 'Select CPV code':
             cp1 = st.selectbox('CPV code', all_cpv_codes, key='cp1a')
             st.caption(f'Industry: **{cpv_to_industry(cp1)}**')
         else:
             ind1 = st.selectbox('Industry', all_industries, key='ind1')
-            cp1  = st.selectbox('CPV code (from industry)', INDUSTRY_LOOKUP.get(ind1,['Unknown']), key='cp1b')
+            cp1  = st.selectbox('CPV code (from industry)', INDUSTRY_LOOKUP.get(ind1, ['Unknown']), key='cp1b')
     with c3:
-        bu1 = st.text_input('Buyer name','Unknown',key='bu1')
+        bu1 = st.text_input('Buyer name', 'Unknown', key='bu1')
         mc  = st.selectbox('Model', model_options, index=default_index, key='mc1')
-    if st.button('Predict',type='primary',use_container_width=True,key='btn1'):
-        row,br,cr,rr = build_row(cv1,am1,aq1,r1,cp1,vb1,bu1,encoders,feature_cols,rates,scaler)
-        # Resolve model from selection
-        mc_clean = mc.replace(' ⭐ Recommended','').split(' — AUC')[0].strip()
+    if st.button('Predict', type='primary', use_container_width=True, key='btn1'):
+        row, br, cr, rr = build_row(cv1, am1, aq1, r1, cp1, vb1, bu1, encoders, feature_cols, rates, scaler)
+        mc_clean = mc.replace(' ⭐ Recommended', '').split(' — AUC')[0].strip()
         m = rf if 'Random Forest' in mc_clean else xgb if 'XGBoost' in mc_clean else lr
         p    = m.predict_proba(row)[0][1]
-        pred = int(p>=0.5)
-        a,b,c,d = st.columns(4)
-        a.metric('Model', mc_clean + (' ⭐' if mc_clean==best_label else ''))
-        b.metric('Prediction','SME' if pred else 'Non-SME')
-        c.metric('SME Probability',f'{p*100:.1f}%')
-        d.metric('Confidence','High' if abs(p-0.5)>0.25 else 'Low')
+        pred = int(p >= 0.5)
+        a, b, c, d = st.columns(4)
+        a.metric('Model',          mc_clean + (' ⭐' if mc_clean == best_label else ''))
+        b.metric('Prediction',     'SME' if pred else 'Non-SME')
+        c.metric('SME Probability', f'{p*100:.1f}%')
+        d.metric('Confidence',     'High' if abs(p-0.5) > 0.25 else 'Low')
         st.progress(float(p))
         if pred:
+            st.success('✅ Likely SME award.')
+        else:
+            st.warning('⚠️ Unlikely SME award.')
         st.info(f'Industry: {cpv_to_industry(cp1)}  |  Buyer SME rate: {br*100:.1f}%  |  Sector: {cr*100:.1f}%  |  Region: {rr*100:.1f}%')
 
-# ── TAB 2: DEEP LEARNING ───────────────────────────────────────
+# ── TAB 2: DEEP LEARNING ─────────────────────────────────────────────────────
 with tab2:
     st.subheader('Deep Learning — TensorFlow Neural Network')
     st.markdown('Architecture: Input → Dense(64)+BN+Dropout → Dense(32)+BN+Dropout → Dense(16) → Sigmoid')
-    c1,c2,c3 = st.columns(3)
+    c1, c2, c3 = st.columns(3)
     with c1:
-        cv2 = st.number_input('Contract value (£)',min_value=0.0,value=50000.0,step=1000.0,key='cv2')
-        am2 = st.selectbox('Month',list(range(1,13)),format_func=lambda m:['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1],key='am2')
-        aq2 = st.selectbox('Quarter',[1,2,3,4],format_func=lambda q:f'Q{q}',key='aq2')
+        cv2 = st.number_input('Contract value (£)', min_value=0.0, value=50000.0, step=1000.0, key='cv2')
+        am2 = st.selectbox('Month', list(range(1,13)),
+                           format_func=lambda m: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1],
+                           key='am2')
+        aq2 = st.selectbox('Quarter', [1,2,3,4], format_func=lambda q: f'Q{q}', key='aq2')
     with c2:
-        r2  = st.selectbox('Region',   list(encoders.get('region',{'Unknown':0}).keys()),key='r2')
-        vb2 = st.selectbox('Value band',list(encoders.get('value_band',{'Unknown':0}).keys()),key='vb2')
-        inp_method2 = st.radio('CPV input method',['Select CPV code','Select by industry'],key='im2',horizontal=True)
+        r2  = st.selectbox('Region',     list(encoders.get('region',     {'Unknown':0}).keys()), key='r2')
+        vb2 = st.selectbox('Value band', list(encoders.get('value_band', {'Unknown':0}).keys()), key='vb2')
+        inp_method2 = st.radio('CPV input method', ['Select CPV code', 'Select by industry'], key='im2', horizontal=True)
         if inp_method2 == 'Select CPV code':
             cp2 = st.selectbox('CPV code', all_cpv_codes, key='cp2a')
             st.caption(f'Industry: **{cpv_to_industry(cp2)}**')
         else:
             ind2 = st.selectbox('Industry', all_industries, key='ind2')
-            cp2  = st.selectbox('CPV code (from industry)', INDUSTRY_LOOKUP.get(ind2,['Unknown']), key='cp2b')
+            cp2  = st.selectbox('CPV code (from industry)', INDUSTRY_LOOKUP.get(ind2, ['Unknown']), key='cp2b')
     with c3:
-        bu2 = st.text_input('Buyer name','Unknown',key='bu2')
-    if st.button('Predict with TensorFlow',type='primary',use_container_width=True,key='btn2'):
+        bu2 = st.text_input('Buyer name', 'Unknown', key='bu2')
+    if st.button('Predict with TensorFlow', type='primary', use_container_width=True, key='btn2'):
         if tflite is None:
-            st.error('TFLite model not found — ensure sme_tf_lite.tflite is in the repo.')
+            st.error('TFLite model not available in this deployment.')
         else:
-            row2,br2,cr2,rr2 = build_row(cv2,am2,aq2,r2,cp2,vb2,bu2,encoders,feature_cols,rates,scaler)
+            row2, br2, cr2, rr2 = build_row(cv2, am2, aq2, r2, cp2, vb2, bu2, encoders, feature_cols, rates, scaler)
             p2   = predict_tflite(tflite, row2)
-            pred2= int(p2>=0.5)
-            a,b,c,d = st.columns(4)
-            a.metric('Model','TensorFlow NN')
-            b.metric('Prediction','SME' if pred2 else 'Non-SME')
-            c.metric('SME Probability',f'{p2*100:.1f}%')
-            d.metric('Confidence','High' if abs(p2-0.5)>0.25 else 'Low')
+            pred2 = int(p2 >= 0.5)
+            a, b, c, d = st.columns(4)
+            a.metric('Model',          'TensorFlow NN')
+            b.metric('Prediction',     'SME' if pred2 else 'Non-SME')
+            c.metric('SME Probability', f'{p2*100:.1f}%')
+            d.metric('Confidence',     'High' if abs(p2-0.5) > 0.25 else 'Low')
             st.progress(float(p2))
-            (st.success('✅ Likely SME award.') if pred2 else st.warning('⚠️ Unlikely SME award.'))
+            if pred2:
+                st.success('✅ Likely SME award.')
+            else:
+                st.warning('⚠️ Unlikely SME award.')
             st.info(f'Industry: {cpv_to_industry(cp2)}  |  Buyer SME rate: {br2*100:.1f}%  |  Sector: {cr2*100:.1f}%  |  Region: {rr2*100:.1f}%')
 
-# ── TAB 3: CPV LOOKUP ──────────────────────────────────────────
+# ── TAB 3: CPV LOOKUP ────────────────────────────────────────────────────────
 with tab3:
     st.subheader('🏭 CPV Code ↔ Industry Lookup')
     st.markdown('Find the industry for any CPV code, or find CPV codes for any industry.')
@@ -243,7 +257,8 @@ with tab3:
                 sme_for_code = rates['cpv_sme_rate'].get(str(cpv_input.strip()), rates['global_sme_rate'])
                 st.metric('Historical SME award rate for this CPV', f'{sme_for_code*100:.1f}%')
                 st.markdown(f'Other CPV codes in **{industry_result}**:')
-                st.dataframe(pd.DataFrame({'CPV Code':related,'Industry':[industry_result]*len(related)}),use_container_width=True)
+                st.dataframe(pd.DataFrame({'CPV Code': related, 'Industry': [industry_result]*len(related)}),
+                             use_container_width=True)
     with col_right:
         st.markdown('#### Industry → CPV codes')
         industry_input = st.selectbox('Select an industry', all_industries, key='ind_in')
@@ -251,15 +266,18 @@ with tab3:
             cpv_list = INDUSTRY_LOOKUP.get(industry_input, [])
             st.success(f'**{industry_input}** contains {len(cpv_list)} CPV code(s)')
             rates_in_sector = {c: rates['cpv_sme_rate'].get(c, rates['global_sme_rate']) for c in cpv_list}
-            df_sector = pd.DataFrame({'CPV Code':cpv_list,'SME Rate':[f"{rates_in_sector[c]*100:.1f}%" for c in cpv_list]})
+            df_sector = pd.DataFrame({
+                'CPV Code': cpv_list,
+                'SME Rate': [f"{rates_in_sector[c]*100:.1f}%" for c in cpv_list]
+            })
             st.dataframe(df_sector, use_container_width=True)
             if rates_in_sector:
-                best_cpv = max(rates_in_sector, key=rates_in_sector.get)
-                worst_cpv= min(rates_in_sector, key=rates_in_sector.get)
+                best_cpv  = max(rates_in_sector, key=rates_in_sector.get)
+                worst_cpv = min(rates_in_sector, key=rates_in_sector.get)
                 st.info(f'Highest SME rate: CPV {best_cpv} at {rates_in_sector[best_cpv]*100:.1f}%')
                 st.info(f'Lowest SME rate:  CPV {worst_cpv} at {rates_in_sector[worst_cpv]*100:.1f}%')
 
-# ── TAB 4: HISTORICAL ──────────────────────────────────────────
+# ── TAB 4: HISTORICAL ────────────────────────────────────────────────────────
 with tab4:
     st.subheader('Historical SME Procurement Insights')
     col_top1, col_top2, col_top3 = st.columns(3)
@@ -270,35 +288,32 @@ with tab4:
     ca, cb = st.columns(2)
     with ca:
         st.markdown('**Top 10 regions by SME award rate:**')
-        rdf = pd.DataFrame(list(rates['region_sme_rate'].items()),columns=['Region','SME Rate'])
-        rdf = rdf.sort_values('SME Rate',ascending=False).head(10)
-        rdf['SME Rate'] = rdf['SME Rate'].apply(lambda x:f'{x*100:.1f}%')
+        rdf = pd.DataFrame(list(rates['region_sme_rate'].items()), columns=['Region', 'SME Rate'])
+        rdf = rdf.sort_values('SME Rate', ascending=False).head(10)
+        rdf['SME Rate'] = rdf['SME Rate'].apply(lambda x: f'{x*100:.1f}%')
         st.dataframe(rdf, use_container_width=True)
     with cb:
         st.markdown('**Top 10 CPV sectors by SME award rate:**')
-        cdf = pd.DataFrame(list(rates['cpv_sme_rate'].items()),columns=['CPV Code','SME Rate'])
-        cdf = cdf.sort_values('SME Rate',ascending=False).head(10)
+        cdf = pd.DataFrame(list(rates['cpv_sme_rate'].items()), columns=['CPV Code', 'SME Rate'])
+        cdf = cdf.sort_values('SME Rate', ascending=False).head(10)
         cdf['Industry'] = cdf['CPV Code'].apply(cpv_to_industry)
-        cdf['SME Rate'] = cdf['SME Rate'].apply(lambda x:f'{x*100:.1f}%')
-        st.dataframe(cdf[['CPV Code','Industry','SME Rate']], use_container_width=True)
+        cdf['SME Rate'] = cdf['SME Rate'].apply(lambda x: f'{x*100:.1f}%')
+        st.dataframe(cdf[['CPV Code', 'Industry', 'SME Rate']], use_container_width=True)
     st.divider()
     st.markdown('**All model performance comparison:**')
     try:
         results_df = pd.read_csv('model_comparison.csv')
         results_df = results_df.sort_values('AUC-ROC', ascending=False)
-        results_df['Recommended'] = results_df['Model'].apply(lambda x: '⭐ Yes' if x.replace(' (baseline)','').strip() in best_label or best_label in x else '')
+        results_df['Recommended'] = results_df['Model'].apply(
+            lambda x: '⭐ Yes' if best_label in x or x in best_label else '')
         st.dataframe(results_df, use_container_width=True)
     except Exception:
         st.info('Model comparison table not available.')
 
 with st.sidebar:
     st.header('About')
-    st.markdown('**ML Models:**')
-    st.markdown('- Random Forest')
-    st.markdown('- XGBoost')
-    st.markdown('- Logistic Regression')
-    st.markdown('**Deep Learning:**')
-    st.markdown('- TensorFlow Neural Network (TFLite)')
+    st.markdown('**ML Models:** Random Forest · XGBoost · Logistic Regression')
+    st.markdown('**Deep Learning:** TensorFlow Neural Network (TFLite)')
     st.divider()
     if best_auc:
         st.success(f'⭐ Recommended: **{best_label}**\nAUC-ROC: {best_auc:.4f}')
