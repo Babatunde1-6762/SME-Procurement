@@ -1,1 +1,1 @@
-["contract_value", "award_year", "award_month", "award_quarter", "region_enc", "cpv_code_enc"]
+["log_contract_value", "value_band_num", "award_month", "award_quarter", "is_quarter_end", "is_high_value", "buyer_sme_rate", "cpv_sme_rate", "region_sme_rate", "region_enc", "cpv_code_enc"]
