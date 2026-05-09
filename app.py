@@ -185,7 +185,7 @@ with tab1:
         c.metric('SME Probability',f'{p*100:.1f}%')
         d.metric('Confidence','High' if abs(p-0.5)>0.25 else 'Low')
         st.progress(float(p))
-        (st.success('✅ Likely SME award.') if pred else st.warning('⚠️ Unlikely SME award.'))
+        if pred:
         st.info(f'Industry: {cpv_to_industry(cp1)}  |  Buyer SME rate: {br*100:.1f}%  |  Sector: {cr*100:.1f}%  |  Region: {rr*100:.1f}%')
 
 # ── TAB 2: DEEP LEARNING ───────────────────────────────────────
